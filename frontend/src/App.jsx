@@ -95,7 +95,7 @@ function App() {
 
       const socket =
         new WebSocket(
-          "ws://127.0.0.1:8000/ws/predict"
+          "wss://isl-translator-v2.onrender.com/ws/predict"
         );
 
 
@@ -161,10 +161,8 @@ function App() {
 
           setStatus(
 
-            `Collecting frames: ${
-              data.frames
-            } / ${
-              data.required || 20
+            `Collecting frames: ${data.frames
+            } / ${data.required || 20
             }`
 
           );
@@ -390,7 +388,7 @@ function App() {
         if (
           socketRef.current &&
           socketRef.current.readyState ===
-            WebSocket.OPEN
+          WebSocket.OPEN
         ) {
 
           socketRef.current.send(
@@ -443,11 +441,11 @@ function App() {
     if (
 
       label ===
-        lastSpokenRef.current &&
+      lastSpokenRef.current &&
 
       now -
-        lastSpeechTimeRef.current <
-        2500
+      lastSpeechTimeRef.current <
+      2500
 
     ) {
 
