@@ -95,7 +95,7 @@ function App() {
 
       const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL ||
-  "ws://127.0.0.1:10000";
+  "ws://127.0.0.1:8000";
 
 const socket =
   new WebSocket(
@@ -130,7 +130,7 @@ const socket =
         intervalRef.current =
           setInterval(
             sendFrame,
-            50
+            100
           );
       };
 

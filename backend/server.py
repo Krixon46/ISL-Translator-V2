@@ -36,25 +36,23 @@ MEDIAPIPE_MODEL = (
 # CONFIGURATION
 # ============================================================
 
-# Model was trained using 20 frames.
 SEQUENCE_LENGTH = 20
 
-# Minimum confidence required for a prediction.
+# Minimum confidence to consider a prediction.
 CONFIDENCE_THRESHOLD = 0.60
 
-# Confidence required before we consider a prediction stable.
+# Confidence required to accept a stable prediction.
 STABLE_CONFIDENCE = 0.65
 
-# Number of consecutive similar predictions required
-# before accepting a sign as stable.
+# Number of consecutive matching predictions.
 STABLE_PREDICTIONS_REQUIRED = 3
 
-# Number of consecutive frames without hands required
-# to consider the current sign finished.
+# Number of consecutive no-hand frames
+# required to release/reset the current sign.
 RELEASE_FRAMES_REQUIRED = 5
 
-# Frontend sends approximately one frame every 50 ms.
-FRAME_INTERVAL_MS = 50
+# Frontend should ideally send around 10 FPS.
+FRAME_INTERVAL_MS = 100
 
 
 # ============================================================
@@ -62,15 +60,11 @@ FRAME_INTERVAL_MS = 50
 # ============================================================
 
 if not SCALER_PATH.exists():
-
     raise FileNotFoundError(
         f"Scaler not found: {SCALER_PATH}"
     )
 
-
-scaler = joblib.load(
-    SCALER_PATH
-)
+scaler = joblib.load(SCALER_PATH)
 
 print("Scaler loaded successfully.")
 
@@ -80,24 +74,14 @@ print("Scaler loaded successfully.")
 # ============================================================
 
 if not LABELS_PATH.exists():
-
     raise FileNotFoundError(
         f"Labels file not found: {LABELS_PATH}"
     )
 
-
-with open(
-    LABELS_PATH,
-    "r"
-) as f:
-
+with open(LABELS_PATH, "r") as f:
     LABELS = json.load(f)
 
-
-print(
-    "Loaded labels:",
-    LABELS
-)
+print("Loaded labels:", LABELS)
 
 
 # ============================================================
@@ -110,11 +94,7 @@ device = torch.device(
     else "cpu"
 )
 
-
-print(
-    "Using device:",
-    device
-)
+print("Using device:", device)
 
 
 # ============================================================
@@ -122,11 +102,9 @@ print(
 # ============================================================
 
 if not MODEL_PATH.exists():
-
     raise FileNotFoundError(
         f"Model not found: {MODEL_PATH}"
     )
-
 
 state_dict = torch.load(
     MODEL_PATH,
@@ -150,9 +128,7 @@ model = SignBiLSTM(
 # LOAD WEIGHTS
 # ============================================================
 
-model.load_state_dict(
-    state_dict
-)
+model.load_state_dict(state_dict)
 
 model.to(device)
 
@@ -172,9 +148,7 @@ print(
     )
 )
 
-print(
-    "Input features: 126"
-)
+print("Input features: 126")
 
 print(
     "Sequence length:",
@@ -216,8 +190,6 @@ RunningMode = (
 )
 
 
-
-
 # ============================================================
 # FASTAPI
 # ============================================================
@@ -226,13 +198,12 @@ app = FastAPI()
 
 
 app.add_middleware(
-
     CORSMiddleware,
 
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "https://isl-translator-v2-pink.vercel.app/"
+        "https://isl-translator-v2-pink.vercel.app"
     ],
 
     allow_credentials=True,
@@ -254,8 +225,15 @@ async def predict(
 
     await websocket.accept()
 
-        # ========================================================
-    # CREATE MEDIAPIPE LANDMARKER FOR THIS CONNECTION
+    print()
+    print("==============================")
+    print("CLIENT CONNECTED")
+    print("==============================")
+    print()
+
+
+    # ========================================================
+    # CREATE MEDIAPIPE LANDMARKER
     # ========================================================
 
     options = HandLandmarkerOptions(
@@ -284,26 +262,9 @@ async def predict(
         )
     )
 
-    print()
-    print("==============================")
-    print("CLIENT CONNECTED")
-    print("==============================")
-
 
     # ========================================================
-    # FRAME BUFFER
-    #
-    # This is the sliding window.
-    #
-    # Example:
-    #
-    # 1  2  3  ... 20
-    #       ↓ new frame
-    # 2  3  4  ... 21
-    #       ↓ new frame
-    # 3  4  5  ... 22
-    #
-    # The deque automatically removes the oldest frame.
+    # SLIDING WINDOW
     # ========================================================
 
     sequence = deque(
@@ -313,14 +274,6 @@ async def predict(
 
     # ========================================================
     # MEDIAPIPE TIMESTAMP
-    #
-    # IMPORTANT:
-    # Each WebSocket connection gets its own timestamp.
-    #
-    # This prevents:
-    #
-    # ValueError:
-    # Input timestamp must be monotonically increasing
     # ========================================================
 
     timestamp_ms = 0
@@ -341,6 +294,18 @@ async def predict(
 
     stable_prediction_count = 0
 
+
+    # ========================================================
+    # ACCEPTED / LOCKED PREDICTION
+    #
+    # Once a sign is accepted:
+    #
+    # prediction_sent = True
+    #
+    # We DO NOT accept another prediction
+    # until the hand is removed.
+    # ========================================================
+
     accepted_prediction = None
 
 
@@ -351,15 +316,38 @@ async def predict(
     prediction_window_count = 0
 
 
+    # ========================================================
+    # CLIENT CONNECTION STATE
+    # ========================================================
+
+    client_connected = True
+
+
     try:
 
-        while True:
+        while client_connected:
 
             # ==================================================
             # RECEIVE FRAME
             # ==================================================
 
-            data = await websocket.receive_bytes()
+            try:
+
+                data = (
+                    await websocket.receive_bytes()
+                )
+
+            except WebSocketDisconnect:
+
+                client_connected = False
+
+                print()
+                print("==============================")
+                print("CLIENT DISCONNECTED")
+                print("==============================")
+                print()
+
+                break
 
 
             # ==================================================
@@ -379,7 +367,6 @@ async def predict(
 
 
             if frame is None:
-
                 continue
 
 
@@ -432,12 +419,13 @@ async def predict(
 
 
             print(
-                f"MediaPipe: {hand_count} hand(s) detected"
+                f"MediaPipe: "
+                f"{hand_count} hand(s) detected"
             )
 
 
             # ==================================================
-            # NO HAND DETECTED
+            # NO HAND
             # ==================================================
 
             if hand_count == 0:
@@ -445,43 +433,28 @@ async def predict(
                 no_hand_count += 1
 
 
-                # ------------------------------------------------
-                # If enough frames contain no hands,
-                # the current sign is finished.
-                # ------------------------------------------------
+                # ----------------------------------------------
+                # HAND HAS BEEN REMOVED
+                # ----------------------------------------------
 
                 if (
                     no_hand_count
                     >= RELEASE_FRAMES_REQUIRED
                 ):
 
-                    # --------------------------------------------
-                    # FULL RESET
-                    # --------------------------------------------
+                    print()
+                    print("==============================")
+                    print("HAND RELEASED")
+                    print("RESETTING ALL STATE")
+                    print("==============================")
+                    print()
 
-                    if len(sequence) > 0:
 
-                        print()
-                        print(
-                            "=============================="
-                        )
-
-                        print(
-                            "HAND RELEASED"
-                        )
-
-                        print(
-                            "Resetting sequence..."
-                        )
-
-                        print(
-                            "=============================="
-                        )
-                        print()
-
+                    # ------------------------------------------
+                    # CLEAR EVERYTHING
+                    # ------------------------------------------
 
                     sequence.clear()
-
 
                     last_prediction_index = None
 
@@ -491,51 +464,81 @@ async def predict(
 
                     prediction_window_count = 0
 
+                    no_hand_count = 0
 
-                    await websocket.send_json({
 
-                        "status":
-                            "ready",
+                    # ------------------------------------------
+                    # Tell frontend:
+                    #
+                    # 0 / 20
+                    #
+                    # ------------------------------------------
 
-                        "text":
-                            "",
+                    if client_connected:
 
-                        "confidence":
-                            0,
+                        try:
 
-                        "frames":
-                            0,
+                            await websocket.send_json({
 
-                        "required":
-                            SEQUENCE_LENGTH
-                    })
+                                "status":
+                                    "ready",
+
+                                "text":
+                                    "",
+
+                                "confidence":
+                                    0,
+
+                                "frames":
+                                    0,
+
+                                "required":
+                                    SEQUENCE_LENGTH
+                            })
+
+                        except (
+                            WebSocketDisconnect,
+                            RuntimeError
+                        ):
+
+                            client_connected = False
 
 
                     continue
 
 
-                # ------------------------------------------------
-                # Hand has disappeared temporarily.
-                # ------------------------------------------------
+                # ----------------------------------------------
+                # Temporarily no hand
+                # ----------------------------------------------
 
-                await websocket.send_json({
+                if client_connected:
 
-                    "status":
-                        "no_hand",
+                    try:
 
-                    "text":
-                        "",
+                        await websocket.send_json({
 
-                    "confidence":
-                        0,
+                            "status":
+                                "no_hand",
 
-                    "frames":
-                        len(sequence),
+                            "text":
+                                "",
 
-                    "required":
-                        SEQUENCE_LENGTH
-                })
+                            "confidence":
+                                0,
 
+                            "frames":
+                                len(sequence),
+
+                            "required":
+                                SEQUENCE_LENGTH
+                        })
+
+                    except (
+                        WebSocketDisconnect,
+                        RuntimeError
+                    ):
+
+                        client_connected = False
 
                 continue
 
@@ -548,7 +551,59 @@ async def predict(
 
 
             # ==================================================
-            # EXTRACT FEATURES
+            # IMPORTANT:
+            #
+            # If a prediction was already accepted,
+            # DO NOT continue making predictions.
+            #
+            # We simply tell the frontend that the sign
+            # is locked until the hand is removed.
+            # ==================================================
+
+            if accepted_prediction is not None:
+
+                predicted_label = (
+                    LABELS[
+                        accepted_prediction
+                    ]
+                )
+
+
+                if client_connected:
+
+                    try:
+
+                        await websocket.send_json({
+
+                            "status":
+                                "tracking",
+
+                            "text":
+                                predicted_label,
+
+                            "confidence":
+                                1.0,
+
+                            "frames":
+                                SEQUENCE_LENGTH,
+
+                            "required":
+                                SEQUENCE_LENGTH
+                        })
+
+                    except (
+                        WebSocketDisconnect,
+                        RuntimeError
+                    ):
+
+                        client_connected = False
+
+
+                continue
+
+
+            # ==================================================
+            # FEATURE EXTRACTION
             # ==================================================
 
             features = (
@@ -565,29 +620,39 @@ async def predict(
             if features.shape[0] != 126:
 
                 print(
-                    "ERROR: Expected 126 features,"
-                    f" got {features.shape[0]}"
+                    "ERROR: Expected 126 features, "
+                    f"got {features.shape[0]}"
                 )
 
 
-                await websocket.send_json({
+                if client_connected:
 
-                    "status":
-                        "feature_error",
+                    try:
 
-                    "text":
-                        "Feature size error",
+                        await websocket.send_json({
 
-                    "confidence":
-                        0,
+                            "status":
+                                "feature_error",
 
-                    "frames":
-                        len(sequence),
+                            "text":
+                                "Feature size error",
 
-                    "required":
-                        SEQUENCE_LENGTH
-                })
+                            "confidence":
+                                0,
 
+                            "frames":
+                                len(sequence),
+
+                            "required":
+                                SEQUENCE_LENGTH
+                        })
+
+                    except (
+                        WebSocketDisconnect,
+                        RuntimeError
+                    ):
+
+                        client_connected = False
 
                 continue
 
@@ -596,9 +661,11 @@ async def predict(
             # SCALE FEATURES
             # ==================================================
 
-            features_scaled = scaler.transform(
-                features.reshape(1, -1)
-            )[0]
+            features_scaled = (
+                scaler.transform(
+                    features.reshape(1, -1)
+                )[0]
+            )
 
 
             features_scaled = (
@@ -609,7 +676,7 @@ async def predict(
 
 
             # ==================================================
-            # ADD NEW FRAME
+            # ADD FRAME TO SLIDING WINDOW
             # ==================================================
 
             sequence.append(
@@ -623,24 +690,34 @@ async def predict(
 
             if len(sequence) < SEQUENCE_LENGTH:
 
-                await websocket.send_json({
+                if client_connected:
 
-                    "status":
-                        "collecting",
+                    try:
 
-                    "text":
-                        "",
+                        await websocket.send_json({
 
-                    "confidence":
-                        0,
+                            "status":
+                                "collecting",
 
-                    "frames":
-                        len(sequence),
+                            "text":
+                                "",
 
-                    "required":
-                        SEQUENCE_LENGTH
-                })
+                            "confidence":
+                                0,
 
+                            "frames":
+                                len(sequence),
+
+                            "required":
+                                SEQUENCE_LENGTH
+                        })
+
+                    except (
+                        WebSocketDisconnect,
+                        RuntimeError
+                    ):
+
+                        client_connected = False
 
                 continue
 
@@ -653,7 +730,7 @@ async def predict(
 
 
             # ==================================================
-            # CONVERT TO NUMPY
+            # NUMPY
             # ==================================================
 
             X = np.array(
@@ -662,13 +739,9 @@ async def predict(
             )
 
 
-            # Shape:
-            #
-            # 20 × 126
-            #
-            # ↓
-            #
-            # 1 × 20 × 126
+            # ==================================================
+            # TORCH
+            # ==================================================
 
             X = torch.tensor(
                 X,
@@ -689,14 +762,12 @@ async def predict(
 
                 outputs = model(X)
 
-
                 probabilities = (
                     torch.softmax(
                         outputs,
                         dim=1
                     )
                 )
-
 
                 confidence, prediction = (
                     probabilities.max(
@@ -744,37 +815,50 @@ async def predict(
             ):
 
                 print(
-                    f"Window {prediction_window_count}: "
+                    f"Window "
+                    f"{prediction_window_count}: "
                     f"Uncertain → "
                     f"{predicted_label} "
                     f"| {confidence_value:.2f}"
                 )
 
 
-                # --------------------------------------------
-                # Don't reset the sequence.
-                #
-                # The deque continues sliding.
-                # --------------------------------------------
+                # Reset stabilization because
+                # confidence wasn't sufficient.
 
-                await websocket.send_json({
+                last_prediction_index = None
 
-                    "status":
-                        "uncertain",
+                stable_prediction_count = 0
 
-                    "text":
-                        "",
 
-                    "confidence":
-                        confidence_value,
+                if client_connected:
 
-                    "frames":
-                        SEQUENCE_LENGTH,
+                    try:
 
-                    "required":
-                        SEQUENCE_LENGTH
-                })
+                        await websocket.send_json({
 
+                            "status":
+                                "uncertain",
+
+                            "text":
+                                "",
+
+                            "confidence":
+                                confidence_value,
+
+                            "frames":
+                                SEQUENCE_LENGTH,
+
+                            "required":
+                                SEQUENCE_LENGTH
+                        })
+
+                    except (
+                        WebSocketDisconnect,
+                        RuntimeError
+                    ):
+
+                        client_connected = False
 
                 continue
 
@@ -801,7 +885,8 @@ async def predict(
 
 
             print(
-                f"Window {prediction_window_count}: "
+                f"Window "
+                f"{prediction_window_count}: "
                 f"{predicted_label} "
                 f"| {confidence_value:.2f} "
                 f"| stable "
@@ -811,7 +896,7 @@ async def predict(
 
 
             # ==================================================
-            # CHECK WHETHER PREDICTION IS STABLE
+            # STABLE PREDICTION
             # ==================================================
 
             if (
@@ -828,112 +913,105 @@ async def predict(
 
             ):
 
-                # --------------------------------------------
-                # Accept the sign.
-                # --------------------------------------------
+                # ----------------------------------------------
+                # LOCK PREDICTION
+                # ----------------------------------------------
 
-                if (
-                    accepted_prediction
-                    !=
+                accepted_prediction = (
                     predicted_index
-                ):
-
-                    accepted_prediction = (
-                        predicted_index
-                    )
+                )
 
 
-                    print()
-                    print(
-                        "================================"
-                    )
+                print()
+                print(
+                    "================================"
+                )
 
-                    print(
-                        f"STABLE PREDICTION: "
-                        f"{predicted_label}"
-                    )
+                print(
+                    f"STABLE PREDICTION: "
+                    f"{predicted_label}"
+                )
 
-                    print(
-                        f"CONFIDENCE: "
-                        f"{confidence_value:.2f}"
-                    )
+                print(
+                    f"CONFIDENCE: "
+                    f"{confidence_value:.2f}"
+                )
 
-                    print(
-                        "================================"
-                    )
-                    print()
+                print(
+                    "PREDICTION LOCKED "
+                    "UNTIL HAND RELEASE"
+                )
 
-
-                    await websocket.send_json({
-
-                        "status":
-                            "prediction",
-
-                        "text":
-                            predicted_label,
-
-                        "confidence":
-                            confidence_value,
-
-                        "frames":
-                            SEQUENCE_LENGTH,
-
-                        "required":
-                            SEQUENCE_LENGTH
-                    })
+                print(
+                    "================================"
+                )
+                print()
 
 
-                else:
+                if client_connected:
 
-                    # ----------------------------------------
-                    # Same sign continues.
-                    #
-                    # Tell frontend that prediction is
-                    # continuing, but don't trigger speech.
-                    # ----------------------------------------
+                    try:
 
-                    await websocket.send_json({
+                        await websocket.send_json({
 
-                        "status":
-                            "tracking",
+                            "status":
+                                "prediction",
 
-                        "text":
-                            predicted_label,
+                            "text":
+                                predicted_label,
 
-                        "confidence":
-                            confidence_value,
+                            "confidence":
+                                confidence_value,
 
-                        "frames":
-                            SEQUENCE_LENGTH,
+                            "frames":
+                                SEQUENCE_LENGTH,
 
-                        "required":
-                            SEQUENCE_LENGTH
-                    })
+                            "required":
+                                SEQUENCE_LENGTH
+                        })
+
+                    except (
+                        WebSocketDisconnect,
+                        RuntimeError
+                    ):
+
+                        client_connected = False
 
 
             else:
 
                 # =================================================
-                # HIGH CONFIDENCE BUT NOT YET STABLE
+                # STABILIZING
                 # =================================================
 
-                await websocket.send_json({
+                if client_connected:
 
-                    "status":
-                        "stabilizing",
+                    try:
 
-                    "text":
-                        "",
+                        await websocket.send_json({
 
-                    "confidence":
-                        confidence_value,
+                            "status":
+                                "stabilizing",
 
-                    "frames":
-                        SEQUENCE_LENGTH,
+                            "text":
+                                "",
 
-                    "required":
-                        SEQUENCE_LENGTH
-                })
+                            "confidence":
+                                confidence_value,
+
+                            "frames":
+                                SEQUENCE_LENGTH,
+
+                            "required":
+                                SEQUENCE_LENGTH
+                        })
+
+                    except (
+                        WebSocketDisconnect,
+                        RuntimeError
+                    ):
+
+                        client_connected = False
 
 
     except WebSocketDisconnect:
@@ -955,3 +1033,29 @@ async def predict(
         )
         print("==============================")
         print()
+
+
+    finally:
+
+        # ========================================================
+        # CLEAN UP MEDIAPIPE
+        # ========================================================
+
+        try:
+
+            landmarker.close()
+
+        except Exception:
+
+            pass
+
+
+        # ========================================================
+        # CLEAN UP STATE
+        # ========================================================
+
+        sequence.clear()
+
+        print(
+            "Connection cleanup complete."
+        )
