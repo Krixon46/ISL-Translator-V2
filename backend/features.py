@@ -1,6 +1,12 @@
 import numpy as np
 
 
+def _get_coord(landmark, key):
+    if isinstance(landmark, dict):
+        return landmark.get(key, 0.0)
+    return getattr(landmark, key, 0.0)
+
+
 def process_single_hand(hand_landmarks):
     """
     Convert one hand into the EXACT 63 features
@@ -12,16 +18,20 @@ def process_single_hand(hand_landmarks):
     Kaggle training used wrist-relative coordinates
     WITHOUT hand-size normalization.
     """
+    if not hand_landmarks or len(hand_landmarks) < 21:
+        return np.zeros(63, dtype=np.float32)
 
     wrist = hand_landmarks[0]
+    wrist_x = _get_coord(wrist, "x")
+    wrist_y = _get_coord(wrist, "y")
+    wrist_z = _get_coord(wrist, "z")
 
     features = []
 
     for landmark in hand_landmarks:
-
-        x = landmark.x - wrist.x
-        y = landmark.y - wrist.y
-        z = landmark.z - wrist.z
+        x = _get_coord(landmark, "x") - wrist_x
+        y = _get_coord(landmark, "y") - wrist_y
+        z = _get_coord(landmark, "z") - wrist_z
 
         features.extend([
             x,
@@ -35,9 +45,9 @@ def process_single_hand(hand_landmarks):
     )
 
 
-def landmarks_to_features(result):
+def landmarks_to_features(hands_data):
     """
-    Convert MediaPipe result into exactly 126 features.
+    Convert hands landmark list (from JSON payload or MediaPipe) into exactly 126 features.
 
     Hand 1:
         63 features
@@ -53,8 +63,12 @@ def landmarks_to_features(result):
 
     This must match the Kaggle training pipeline exactly.
     """
-
-    detected_hands = result.hand_landmarks
+    if hasattr(hands_data, "hand_landmarks"):
+        detected_hands = hands_data.hand_landmarks
+    elif isinstance(hands_data, list):
+        detected_hands = hands_data
+    else:
+        detected_hands = []
 
     all_features = []
 
@@ -63,13 +77,10 @@ def landmarks_to_features(result):
     # ========================================================
 
     if len(detected_hands) >= 1:
-
         first_hand = process_single_hand(
             detected_hands[0]
         )
-
     else:
-
         first_hand = np.zeros(
             63,
             dtype=np.float32
@@ -77,26 +88,21 @@ def landmarks_to_features(result):
 
     all_features.extend(first_hand)
 
-
     # ========================================================
     # SECOND HAND
     # ========================================================
 
     if len(detected_hands) >= 2:
-
         second_hand = process_single_hand(
             detected_hands[1]
         )
-
     else:
-
         second_hand = np.zeros(
             63,
             dtype=np.float32
         )
 
     all_features.extend(second_hand)
-
 
     # ========================================================
     # FINAL FEATURE VECTOR
@@ -107,4 +113,4 @@ def landmarks_to_features(result):
         dtype=np.float32
     )
 
-    return features
+    return features
