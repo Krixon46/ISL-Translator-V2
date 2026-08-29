@@ -93,10 +93,14 @@ function App() {
       // WEBSOCKET
       // ----------------------------------------------------
 
-      const socket =
-        new WebSocket(
-          "wss://isl-translator-v2.onrender.com/ws/predict"
-        );
+      const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  "ws://127.0.0.1:10000";
+
+const socket =
+  new WebSocket(
+    `${BACKEND_URL}/ws/predict`
+  );
 
 
       socketRef.current =
@@ -228,6 +232,17 @@ function App() {
         }
 
 
+        if (data.status === "waiting") {
+  setStatus("Sign detected — remove hand for next sign");
+  setFrames(0);
+  return;
+}
+
+if (data.status === "ready") {
+  setStatus("Ready — show next sign");
+  setFrames(0);
+  return;
+}
         // ==================================================
         // PREDICTION
         // ==================================================

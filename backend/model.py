@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class SignLSTM(nn.Module):
+class SignBiLSTM(nn.Module):
 
     def __init__(
         self,
@@ -14,36 +14,14 @@ class SignLSTM(nn.Module):
 
         super().__init__()
 
-        # ====================================================
-        # BIDIRECTIONAL LSTM
-        # ====================================================
-
         self.lstm = nn.LSTM(
-
             input_size=input_size,
-
             hidden_size=hidden_size,
-
             num_layers=num_layers,
-
             batch_first=True,
-
-            bidirectional=True,
-
-            dropout=0.2 if num_layers > 1 else 0
+            dropout=0.3,
+            bidirectional=True
         )
-
-        # ====================================================
-        # CLASSIFIER
-        #
-        # Bidirectional LSTM:
-        #
-        # 128 forward
-        # +
-        # 128 backward
-        # =
-        # 256
-        # ====================================================
 
         self.classifier = nn.Sequential(
 
@@ -54,9 +32,7 @@ class SignLSTM(nn.Module):
 
             nn.ReLU(),
 
-            nn.Dropout(
-                0.3
-            ),
+            nn.Dropout(0.3),
 
             nn.Linear(
                 64,
@@ -64,25 +40,18 @@ class SignLSTM(nn.Module):
             )
         )
 
-
     def forward(self, x):
 
-        # x shape:
-        #
-        # batch × sequence × features
-        #
-        # example:
-        #
-        # 1 × 20 × 126
+        # Expected:
+        # [batch, 20, 126]
 
-        output, _ = self.lstm(x)
+        lstm_out, _ = self.lstm(x)
 
-        # Last timestep
-        last_output = output[:, -1, :]
+        # Final temporal output
+        last_output = lstm_out[:, -1, :]
 
-        # Classification
-        logits = self.classifier(
+        output = self.classifier(
             last_output
         )
 
-        return logits
+        return output

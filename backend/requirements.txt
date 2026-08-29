@@ -1,7 +1,8 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
+
 torch
 fastapi
-uvicorn
+uvicorn[standard]
 websockets
 mediapipe>=0.10.0
 numpy
